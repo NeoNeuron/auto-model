@@ -85,11 +85,33 @@ test('off: the model is unchanged; the dropdown toggle turns it off', async ($, 
   await ui.press({ key: 'auto-model-button' })
   await ui.unmount()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  await band.press({ key: 'auto-model-toggle' })
-  const toggle = await band.find({ key: 'auto-model-toggle' })
-  expect(toggle?.text).toMatch(/Off/)
+  await band.press({ key: 'auto-model-switch' })
+  const toggle = await band.find({ key: 'auto-model-switch' })
+  expect(toggle?.text).toMatch(/off/)
   await band.unmount()
   await $.turn.start({ text: LONG, turnId: 't1' })
   await step($, 't1', 0)
   expect(seen.models).toEqual(['claude-opus-5-5'])
+})
+
+test('the panel lists the three models, and drops the extras when narrow', async ($, on) => {
+  const seen: Seen = { models: [] }
+  const label = { value: 'complex' as string | undefined }
+  engine(on, seen, label)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...MODE, surface: 'terminal' })
+  await ui.press({ key: 'auto-model-button' })
+  await ui.unmount()
+  const wide = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await wide.find({ type: 'Text', text: /opus/ })).toBeDefined()
+  expect(await wide.find({ type: 'Text', text: /moderate/ })).toBeDefined()
+  await wide.unmount()
+  const narrow = await $.ui.mount({
+    ...BAND,
+    props: { ...BAND.props, bodyColumns: 20 },
+    surface: 'terminal',
+  })
+  expect(await narrow.find({ type: 'Text', text: /opus/ })).toBeDefined()
+  expect(await narrow.find({ type: 'Text', text: /moderate/ })).toBeUndefined()
+  await narrow.unmount()
 })

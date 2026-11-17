@@ -16,7 +16,16 @@ Prompts shorter than 6 words (for example "yes, do it") keep the previous turn's
 
 ## Use
 
-A button sits at the bottom-right of the footer under the prompt box, showing the model last picked (`◆ opus ▾`) or `◇ auto off ▾`. Click it to open a small panel above the prompt with the on/off toggle. The setting is remembered across sessions and defaults to on.
+A button sits at the bottom-right of the footer under the prompt box, in the color of the model last picked (`◆ opus ▾`), or dim `◇ auto off ▾`. Click it to open a small panel above the prompt, right-aligned:
+
+```
+ auto model  ● on  ×
+ ■■■ opus    complex
+ ■■■ sonnet  moderate
+ ■■■ haiku   simple
+```
+
+Each model has its own color (opus orange, sonnet blue, haiku green) and a bar of 3, 2 or 1 filled cells. The row for the model used on the last prompt is bold and the others dim. Click `● on` / `○ off` to switch the mod, and `×` to close the panel. On a narrow terminal the bars and tier words are dropped. The setting is remembered across sessions and defaults to on.
 
 You can also run `/auto-model on`, `/auto-model off`, or `/auto-model` to flip it.
 

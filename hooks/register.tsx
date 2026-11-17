@@ -45,6 +45,44 @@ function asTier(label: string | undefined): ModelTier | undefined {
   return TIERS.find(tier => tier === label)
 }
 
+// The icon's palette: one hue per model, and a dark track for what a bar leaves empty
+const MODEL_COLOR: Record<ModelTier, string> = {
+  complex: '#D97757',
+  moderate: '#6A9BCC',
+  simple: '#788C5D',
+}
+const CELLS: Record<ModelTier, number> = { complex: 3, moderate: 2, simple: 1 }
+const ROWS: readonly ModelTier[] = ['complex', 'moderate', 'simple']
+const GREEN = '#788C5D'
+const TRACK = '#4a4f5c'
+const NARROW = 30
+
+// Blend a #rrggbb color toward white (t > 0) or black (t < 0) by |t|
+function lighten(hex: string, t: number): string {
+  const n = parseInt(hex.slice(1), 16)
+  const target = t >= 0 ? 255 : 0
+  const ch = (v: number) =>
+    Math.round(v + (target - v) * Math.abs(t))
+      .toString(16)
+      .padStart(2, '0')
+  return `#${ch((n >> 16) & 255)}${ch((n >> 8) & 255)}${ch(n & 255)}`
+}
+
+// Cells of a bar: filled ones run from a deep shade of the color to a light one
+function barCells(tier: ModelTier): { text: string; color: string }[] {
+  const filled = CELLS[tier]
+  const cells: { text: string; color: string }[] = []
+  for (let i = 0; i < 3; i++) {
+    if (i < filled) {
+      const shade = filled === 1 ? 0 : -0.15 + (0.35 * i) / (filled - 1)
+      cells.push({ text: '■', color: lighten(MODEL_COLOR[tier], shade) })
+    } else {
+      cells.push({ text: '■', color: TRACK })
+    }
+  }
+  return cells
+}
+
 export const register: Register = on => {
   // turnId -> model picked for that turn; every step of the turn uses it.
   const picks = new Map<string, string>()
@@ -117,7 +155,7 @@ export const register: Register = on => {
     const isEnabled = await read($, isOn)
     const tier = await read($, lastTier)
     const pick = tier === null ? 'auto' : MODEL_OF[tier]
-    const label = isEnabled ? `◆ ${pick} ▾` : '◇ auto off ▾'
+    const color = isEnabled && tier !== null ? MODEL_COLOR[tier] : undefined
 
     return (
       <Box key="auto-model" flexDirection="row">
@@ -126,10 +164,14 @@ export const register: Register = on => {
         <Button
           key="auto-model-button"
           plain
-          dimColor={!isEnabled}
-          label={label}
           onPress={() => update($, isOpen, value => !value)}
-        />
+        >
+          {isEnabled ? (
+            <Text color={color ?? GREEN}>{`◆ ${pick} ▾`}</Text>
+          ) : (
+            <Text dimColor>◇ auto off ▾</Text>
+          )}
+        </Button>
       </Box>
     )
   })
@@ -142,37 +184,67 @@ export const register: Register = on => {
     }
     const { Box, Text, Button } = $.ui.resolve(e)
     const isEnabled = await read($, isOn)
+    const tier = await read($, lastTier)
+    const isNarrow = e.props.bodyColumns < NARROW
 
     return (
       <Box flexDirection="column" alignItems="flex-end">
-      <Box
-        flexDirection="column"
-        alignSelf="flex-end"
-        borderStyle="round"
-        paddingX={1}
-      >
-        <Text bold>Auto model</Text>
-        <Button
-          key="auto-model-toggle"
-          plain
-          label={isEnabled ? '[x] On: pick model per prompt' : '[ ] Off: use session model'}
-          onPress={async () => {
-            const wanted = !(await read($, isOn))
-            await update($, isOn, () => wanted)
-            await $.store.set(STORE_KEY, wanted)
-          }}
-        />
-        <Text dimColor>simple → haiku</Text>
-        <Text dimColor>moderate → sonnet</Text>
-        <Text dimColor>complex → opus</Text>
-        <Button
-          key="auto-model-close"
-          plain
-          dimColor
-          label="Close"
-          onPress={() => update($, isOpen, () => false)}
-        />
-      </Box>
+        <Box flexDirection="column" alignSelf="flex-end" paddingX={1}>
+          <Box flexDirection="row" columnGap={2}>
+            <Text bold>auto model</Text>
+            <Button
+              key="auto-model-switch"
+              plain
+              onPress={async () => {
+                const wanted = !(await read($, isOn))
+                await update($, isOn, () => wanted)
+                await $.store.set(STORE_KEY, wanted)
+              }}
+            >
+              {isEnabled ? (
+                <Text color={GREEN} bold>
+                  ● on
+                </Text>
+              ) : (
+                <Text dimColor>○ off</Text>
+              )}
+            </Button>
+            <Button
+              key="auto-model-close"
+              plain
+              onPress={() => update($, isOpen, () => false)}
+            >
+              <Text dimColor>×</Text>
+            </Button>
+          </Box>
+          {ROWS.map(row => {
+            const isPicked = tier === row
+            const isDim = !isEnabled || (tier !== null && !isPicked)
+            return (
+              <Box key={row} flexDirection="row">
+                {!isNarrow &&
+                  barCells(row).map((cell, n) => (
+                    <Text
+                      key={`c${n}`}
+                      color={cell.color}
+                      dimColor={!isEnabled && cell.color !== TRACK}
+                    >
+                      {cell.text}
+                    </Text>
+                  ))}
+                {!isNarrow && <Text> </Text>}
+                <Text
+                  color={MODEL_COLOR[row]}
+                  bold={isPicked && isEnabled}
+                  dimColor={isDim}
+                >
+                  {MODEL_OF[row].padEnd(7)}
+                </Text>
+                {!isNarrow && <Text dimColor>{row}</Text>}
+              </Box>
+            )
+          })}
+        </Box>
       </Box>
     )
   })
