@@ -115,3 +115,21 @@ test('the panel lists the three models, and drops the extras when narrow', async
   expect(await narrow.find({ type: 'Text', text: /moderate/ })).toBeUndefined()
   await narrow.unmount()
 })
+
+test('on desktop the model color is drawn as an SVG, not as button text', async ($, on) => {
+  const seen: Seen = { models: [] }
+  const label = { value: 'complex' as string | undefined }
+  engine(on, seen, label)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.turn.start({ text: LONG, turnId: 't1' })
+  const footer = await $.ui.mount({ ...MODE, surface: 'desktop' })
+  const mark = await footer.find({ type: 'Svg' })
+  expect(mark).toBeDefined()
+  expect(JSON.stringify(mark)).toContain('#D97757')
+  await footer.press({ key: 'auto-model-button' })
+  await footer.unmount()
+  const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  const rows = await band.find({ type: 'Svg' })
+  expect(JSON.stringify(rows)).toContain('#6A9BCC')
+  await band.unmount()
+})

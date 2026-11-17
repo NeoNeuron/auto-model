@@ -1,6 +1,6 @@
 {
   "name": "auto-model",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Auto-selects haiku, sonnet or opus per turn from the prompt's complexity, with a footer toggle",
   "types": "./types/index.d.ts",
   "license": "MIT",

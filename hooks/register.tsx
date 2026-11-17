@@ -83,6 +83,76 @@ function barCells(tier: ModelTier): { text: string; color: string }[] {
   return cells
 }
 
+// Desktop draws a Button natively and a raw color on its label is not kept, so the
+// model's color is drawn as a small SVG there, as usage-band-plus does. Light and dark
+// mode each get a tint of the hue that reads on its background.
+const SVG_STYLE =
+  '<style>' +
+  'text{font-family:Inter,"SF Pro Text",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:13px;font-weight:500}' +
+  '.ink{fill:var(--l)}.mute{fill:#8b8f97;font-weight:400}.track{fill:var(--h);fill-opacity:.22}' +
+  '@media (prefers-color-scheme:dark){.ink{fill:var(--d)}.mute{fill:#9aa0a8}}' +
+  '</style>'
+
+function escapeXml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function svgDoc(width: number, height: number, body: string): string {
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
+    `viewBox="0 0 ${width} ${height}" style="color-scheme:light dark;background:transparent">` +
+    `${SVG_STYLE}${body}</svg>`
+  )
+}
+
+function tintVars(hex: string): string {
+  return `--l:${lighten(hex, -0.38)};--d:${lighten(hex, 0.25)};--h:${hex}`
+}
+
+// The footer label, e.g. `◆ opus`, in the model's color
+function labelSvg(label: string, hex: string | null, isDim: boolean): string {
+  const width = Math.ceil(label.length * 7.6 + 4)
+  const style = hex === null ? '' : ` style="${tintVars(hex)}"`
+  const kind = hex === null ? 'mute' : 'ink'
+  const opacity = isDim ? ' opacity=".6"' : ''
+  return svgDoc(
+    width,
+    20,
+    `<text x="0" y="15" class="${kind}"${style}${opacity}>${escapeXml(label)}</text>`,
+  )
+}
+
+// The panel's three model rows: bar, name, tier word. The row last picked is bold.
+function rowsSvg(tier: ModelTier | null, isEnabled: boolean): string {
+  const parts: string[] = []
+  ROWS.forEach((row, i) => {
+    const y = 4 + i * 22
+    const isPicked = tier === row
+    const isFaded = !isEnabled || (tier !== null && !isPicked)
+    const hex = MODEL_COLOR[row]
+    const group: string[] = []
+    barCells(row).forEach((cell, n) => {
+      const x = n * 13
+      if (cell.color === TRACK) {
+        group.push(
+          `<rect x="${x}" y="${y + 3}" width="10" height="10" rx="2" class="track" style="--h:${hex}"/>`,
+        )
+      } else {
+        group.push(
+          `<rect x="${x}" y="${y + 3}" width="10" height="10" rx="2" fill="${cell.color}"/>`,
+        )
+      }
+    })
+    const weight = isPicked && isEnabled ? ' font-weight="700"' : ''
+    group.push(
+      `<text x="48" y="${y + 13}" class="ink" style="${tintVars(hex)}"${weight}>${MODEL_OF[row]}</text>`,
+      `<text x="100" y="${y + 13}" class="mute">${row}</text>`,
+    )
+    parts.push(`<g${isFaded ? ' opacity=".5"' : ''}>${group.join('')}</g>`)
+  })
+  return svgDoc(168, 70, parts.join(''))
+}
+
 export const register: Register = on => {
   // turnId -> model picked for that turn; every step of the turn uses it.
   const picks = new Map<string, string>()
@@ -157,6 +227,29 @@ export const register: Register = on => {
     const pick = tier === null ? 'auto' : MODEL_OF[tier]
     const color = isEnabled && tier !== null ? MODEL_COLOR[tier] : undefined
 
+    if (e.surface === 'desktop' || e.surface === 'mobile') {
+      const { Box: Row, Button: Press, Svg } = $.ui.resolve(e)
+      const label = isEnabled ? `◆ ${pick}` : '◇ auto off'
+      const hex = isEnabled ? (color ?? GREEN) : null
+      return (
+        <Row key="auto-model" flexDirection="row" alignItems="center">
+          {await next(e)}
+          <Svg
+            source={labelSvg(label, hex, false)}
+            alt={isEnabled ? `auto model: ${pick}` : 'auto model: off'}
+            width={Math.ceil(label.length * 7.6 + 4)}
+            height={20}
+          />
+          <Press
+            key="auto-model-button"
+            plain
+            label="▾"
+            onPress={() => update($, isOpen, value => !value)}
+          />
+        </Row>
+      )
+    }
+
     return (
       <Box key="auto-model" flexDirection="row">
         {await next(e)}
@@ -182,9 +275,43 @@ export const register: Register = on => {
     if (!isPanelOpen || e.props.hasSurvey) {
       return next(e)
     }
-    const { Box, Text, Button } = $.ui.resolve(e)
     const isEnabled = await read($, isOn)
     const tier = await read($, lastTier)
+    const switchOn = async () => {
+      const wanted = !(await read($, isOn))
+      await update($, isOn, () => wanted)
+      await $.store.set(STORE_KEY, wanted)
+    }
+    const closePanel = () => update($, isOpen, () => false)
+
+    if (e.surface === 'desktop' || e.surface === 'mobile') {
+      const { Box, Text, Button, Svg } = $.ui.resolve(e)
+      const pick = tier === null ? 'no pick yet' : MODEL_OF[tier]
+      return (
+        <Box flexDirection="column" alignItems="flex-end">
+          <Box flexDirection="column" alignSelf="flex-end" paddingX={1}>
+            <Box flexDirection="row" columnGap={2} alignItems="center">
+              <Text bold>auto model</Text>
+              <Button
+                key="auto-model-switch"
+                variant={isEnabled ? 'primary' : 'secondary'}
+                label={isEnabled ? '● on' : '○ off'}
+                onPress={switchOn}
+              />
+              <Button key="auto-model-close" plain label="×" onPress={closePanel} />
+            </Box>
+            <Svg
+              source={rowsSvg(tier, isEnabled)}
+              alt={`auto model: ${pick}; opus complex, sonnet moderate, haiku simple`}
+              width={168}
+              height={70}
+            />
+          </Box>
+        </Box>
+      )
+    }
+
+    const { Box, Text, Button } = $.ui.resolve(e)
     const isNarrow = e.props.bodyColumns < NARROW
 
     return (
@@ -192,15 +319,7 @@ export const register: Register = on => {
         <Box flexDirection="column" alignSelf="flex-end" paddingX={1}>
           <Box flexDirection="row" columnGap={2}>
             <Text bold>auto model</Text>
-            <Button
-              key="auto-model-switch"
-              plain
-              onPress={async () => {
-                const wanted = !(await read($, isOn))
-                await update($, isOn, () => wanted)
-                await $.store.set(STORE_KEY, wanted)
-              }}
-            >
+            <Button key="auto-model-switch" plain onPress={switchOn}>
               {isEnabled ? (
                 <Text color={GREEN} bold>
                   ● on
@@ -209,11 +328,7 @@ export const register: Register = on => {
                 <Text dimColor>○ off</Text>
               )}
             </Button>
-            <Button
-              key="auto-model-close"
-              plain
-              onPress={() => update($, isOpen, () => false)}
-            >
+            <Button key="auto-model-close" plain onPress={closePanel}>
               <Text dimColor>×</Text>
             </Button>
           </Box>
