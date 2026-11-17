@@ -1,0 +1,17 @@
+{
+  "name": "auto-model",
+  "version": "0.1.0",
+  "description": "Auto-selects haiku, sonnet or opus per turn from the prompt's complexity, with a footer toggle",
+  "types": "./types/index.d.ts",
+  "license": "MIT",
+  "keywords": [
+    "model",
+    "routing",
+    "auto"
+  ],
+  "author": {
+    "name": "Kai Chen"
+  },
+  "icon": "./assets/icon.png",
+  "repository": "https://github.com/NeoNeuron/auto-model"
+}

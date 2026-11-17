@@ -1,0 +1,14 @@
+{
+  "name": "auto-model",
+  "description": "auto-model: a Claude Code mod that picks haiku, sonnet or opus per turn from prompt complexity",
+  "owner": {
+    "name": "Kai Chen"
+  },
+  "plugins": [
+    {
+      "name": "auto-model",
+      "source": "./",
+      "description": "Auto-selects haiku, sonnet or opus per turn from the prompt's complexity, with a footer toggle"
+    }
+  ]
+}
