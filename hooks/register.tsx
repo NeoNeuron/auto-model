@@ -228,22 +228,18 @@ export const register: Register = on => {
     const color = isEnabled && tier !== null ? MODEL_COLOR[tier] : undefined
 
     if (e.surface === 'desktop' || e.surface === 'mobile') {
-      const { Box: Row, Button: Press, Svg } = $.ui.resolve(e)
+      const { Box: Row, Button: Press, Text: Name } = $.ui.resolve(e)
       const label = isEnabled ? `◆ ${pick}` : '◇ auto off'
-      const hex = isEnabled ? (color ?? GREEN) : null
       return (
         <Row key="auto-model" flexDirection="row" alignItems="center">
           {await next(e)}
-          <Svg
-            source={labelSvg(label, hex, false)}
-            alt={isEnabled ? `auto model: ${pick}` : 'auto model: off'}
-            width={Math.ceil(label.length * 7.6 + 4)}
-            height={20}
-          />
+          <Name color={color ?? GREEN} dimColor={!isEnabled}>
+            {label}
+          </Name>
           <Press
             key="auto-model-button"
             plain
-            label="▾"
+            label=" ▾"
             onPress={() => update($, isOpen, value => !value)}
           />
         </Row>
