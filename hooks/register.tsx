@@ -239,7 +239,7 @@ export const register: Register = on => {
           <Press
             key="auto-model-button"
             plain
-            label=" ▾"
+            label=" ▲"
             onPress={() => update($, isOpen, value => !value)}
           />
         </Row>
@@ -256,9 +256,9 @@ export const register: Register = on => {
           onPress={() => update($, isOpen, value => !value)}
         >
           {isEnabled ? (
-            <Text color={color ?? GREEN}>{`◆ ${pick} ▾`}</Text>
+            <Text color={color ?? GREEN}>{`◆ ${pick} ▲`}</Text>
           ) : (
-            <Text dimColor>◇ auto off ▾</Text>
+            <Text dimColor>◇ auto off ▲</Text>
           )}
         </Button>
       </Box>

@@ -24,7 +24,7 @@ Answer `y` to add the marketplace, then pick a scope.
 
 ## Use
 
-A button sits at the bottom-right of the footer under the prompt box, in the color of the model last picked (`◆ opus ▾`), or dim `◇ auto off ▾`. Click it to open a small panel above the prompt, right-aligned:
+A button sits at the bottom-right of the footer under the prompt box, in the color of the model last picked (`◆ opus ▲`), or dim `◇ auto off ▲`. Click it to open a small panel above the prompt, right-aligned:
 
 ```
  auto model  ● on  ×
