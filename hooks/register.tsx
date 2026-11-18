@@ -18,31 +18,77 @@ const SHORT_WORDS = 6
 const isOn = atom({ plugin: 'auto-model', key: 'isOn' } as const, true)
 const isOpen = atom({ plugin: 'auto-model', key: 'isOpen' } as const, false)
 const lastTier = atom({ plugin: 'auto-model', key: 'lastTier' } as const, null)
+// Set after a "retry" that raised effort instead of switching model.
+const boost = atom({ plugin: 'auto-model', key: 'boost' } as const, false)
 
+// The classifier's answers: the three tiers, plus "retry" for a prompt saying the
+// last answer fell short.
+type Label = ModelTier | 'retry'
+const LABELS: readonly Label[] = [...TIERS, 'retry']
+
+// The criteria follow Anthropic's model-selection guide
+// (academy.claude.com/tutorials/choosing-the-right-claude-model): a more capable
+// model for ambiguity, long work where an early mistake carries through, high
+// stakes and hard-to-verify output; a smaller one for specific, bounded tasks.
 const CLASSIFY_HINT =
-  'Rate how much reasoning this request to a coding assistant needs. ' +
-  'simple: a quick question, lookup, rename, small edit or short explanation. ' +
-  'moderate: an ordinary feature, bug fix or multi-step task in a few files. ' +
-  'complex: architecture, hard debugging, large refactors, research, or deep analysis.\n\n' +
+  'Rate which model this request to a coding assistant needs.\n' +
+  'complex: ambiguous or underspecified; long or multi-step work where an early ' +
+  'mistake carries through; high stakes; output that is hard to verify or has no ' +
+  'single correct answer; architecture, hard debugging, large refactors, research, ' +
+  'deep analysis.\n' +
+  'moderate: an ordinary, well-specified feature, bug fix or multi-step task in a ' +
+  'few files, with a clear way to check the result.\n' +
+  'simple: a specific, bounded request with an obvious correct result: a quick ' +
+  'question, lookup, rename, small edit or short explanation.\n' +
+  'retry: the user says the previous answer missed (wrong, still failing, did not ' +
+  'follow instructions, incomplete) or asks to try again.\n' +
+  'If unsure between two levels, choose the higher one.\n\n' +
   'Request:\n'
+
+// Effort levels in order; a boosted turn sends the one above the engine's.
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+type Effort = (typeof EFFORTS)[number]
 
 function wordCount(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length
 }
 
-function heuristicTier(text: string): ModelTier {
-  const words = wordCount(text)
-  if (words > 120) {
-    return 'complex'
-  }
-  if (words > 25) {
-    return 'moderate'
-  }
-  return 'simple'
+function asLabel(label: string | undefined): Label | undefined {
+  return LABELS.find(known => known === label)
 }
 
-function asTier(label: string | undefined): ModelTier | undefined {
-  return TIERS.find(tier => tier === label)
+function tierAbove(tier: ModelTier): ModelTier {
+  const i = TIERS.indexOf(tier)
+  return TIERS[i + 1] ?? tier
+}
+
+function effortAbove(effort: unknown): Effort | undefined {
+  const i = EFFORTS.indexOf(effort as Effort)
+  if (i < 0) {
+    return undefined
+  }
+  return EFFORTS[Math.min(i + 1, EFFORTS.length - 1)]
+}
+
+// One rung up the guide's ladder: raise effort on the same model first, then move
+// to the next model. Haiku has no effort rung, so it goes straight to sonnet.
+function escalate(
+  previous: ModelTier | null,
+  isBoosted: boolean,
+): { tier: ModelTier; isBoosted: boolean } {
+  if (previous === null) {
+    return { tier: 'complex', isBoosted: false }
+  }
+  if (previous === 'simple') {
+    return { tier: 'moderate', isBoosted: false }
+  }
+  if (!isBoosted) {
+    return { tier: previous, isBoosted: true }
+  }
+  if (previous === 'complex') {
+    return { tier: previous, isBoosted: true }
+  }
+  return { tier: tierAbove(previous), isBoosted: false }
 }
 
 // The icon's palette: one hue per model, and a dark track for what a bar leaves empty
@@ -154,8 +200,9 @@ function rowsSvg(tier: ModelTier | null, isEnabled: boolean): string {
 }
 
 export const register: Register = on => {
-  // turnId -> model picked for that turn; every step of the turn uses it.
-  const picks = new Map<string, string>()
+  // turnId -> model picked for that turn, and whether to raise its effort; every
+  // step of the turn uses it.
+  const picks = new Map<string, { model: string; isBoosted: boolean }>()
 
   on('session.start', async ($, e, next) => {
     const stored = await $.store.get(STORE_KEY)
@@ -192,26 +239,43 @@ export const register: Register = on => {
       return next(e)
     }
     const previous = await read($, lastTier)
+    const wasBoosted = await read($, boost)
+    const answer = await $.model
+      .classify(CLASSIFY_HINT + text.slice(0, 4000), LABELS)
+      .catch(() => undefined)
+    const label = asLabel(answer)
     let tier: ModelTier
-    if (previous !== null && wordCount(text) < SHORT_WORDS) {
+    let isBoosted = false
+    if (label === 'retry') {
+      const rung = escalate(previous, wasBoosted)
+      tier = rung.tier
+      isBoosted = rung.isBoosted
+    } else if (previous !== null && wordCount(text) < SHORT_WORDS) {
+      // A short follow-up ("yes, do it") stays on the model doing the work.
       tier = previous
+      isBoosted = wasBoosted
+    } else if (label === undefined) {
+      // No usable answer: keep the previous tier, or start on opus as the guide advises.
+      tier = previous ?? 'complex'
     } else {
-      const label = await $.model
-        .classify(CLASSIFY_HINT + text.slice(0, 4000), TIERS)
-        .catch(() => undefined)
-      tier = asTier(label) ?? heuristicTier(text)
+      tier = label
     }
-    picks.set(e.turnId, MODEL_OF[tier])
+    picks.set(e.turnId, { model: MODEL_OF[tier], isBoosted })
     await update($, lastTier, () => tier)
+    await update($, boost, () => isBoosted)
     return next(e)
   })
 
   on('turn.step', async function* ($, e, next) {
-    const model = e.agentId === undefined ? picks.get(e.turnId) : undefined
-    if (model === undefined) {
+    const pick = e.agentId === undefined ? picks.get(e.turnId) : undefined
+    if (pick === undefined) {
       return yield* next(e)
     }
-    return yield* next({ ...e, model })
+    const effort = pick.isBoosted ? effortAbove(e.effort) : undefined
+    if (effort === undefined) {
+      return yield* next({ ...e, model: pick.model })
+    }
+    return yield* next({ ...e, model: pick.model, effort })
   })
 
   on('turn.complete', ($, e, next) => {
@@ -224,7 +288,9 @@ export const register: Register = on => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const isEnabled = await read($, isOn)
     const tier = await read($, lastTier)
-    const pick = tier === null ? 'auto' : MODEL_OF[tier]
+    const isBoosted = await read($, boost)
+    // A trailing + marks a turn sent with raised effort.
+    const pick = tier === null ? 'auto' : `${MODEL_OF[tier]}${isBoosted ? '+' : ''}`
     const color = isEnabled && tier !== null ? MODEL_COLOR[tier] : undefined
 
     if (e.surface === 'desktop' || e.surface === 'mobile') {

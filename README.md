@@ -12,7 +12,27 @@ When it is on, a cheap call to the small fast model rates each prompt as simple,
 | moderate | sonnet |
 | complex | opus |
 
-Prompts shorter than 6 words (for example "yes, do it") keep the previous turn's model, so a short follow-up inside a hard task does not drop to the smallest model. Subagents keep the session's model. If the rating call fails, a word-count rule is used instead.
+Prompts shorter than 6 words (for example "yes, do it") keep the previous turn's model, so a short follow-up inside a hard task does not drop to the smallest model. Subagents keep the session's model. If the rating call fails or gives no usable answer, the previous model is kept, or opus is used when there is none yet.
+
+### How the tier is chosen
+
+The rating follows Anthropic's guide [Choosing the right Claude model](https://academy.claude.com/tutorials/choosing-the-right-claude-model):
+
+- **complex (opus):** ambiguous or underspecified requests, long or multi-step work where an early mistake carries through, high stakes, and output that is hard to verify or has no single correct answer.
+- **moderate (sonnet):** an ordinary, well-specified feature or bug fix in a few files, with a clear way to check the result.
+- **simple (haiku):** a specific, bounded request with an obvious correct result.
+- When unsure, the classifier is told to pick the higher level. The guide recommends starting with Opus for most coding work.
+
+**When an answer falls short.** If your prompt says the last answer missed ("still failing", "that's wrong", "try again"), the mod steps up one rung, as the guide advises: first it raises effort on the same model, then it moves to the next model. Haiku has no effort rung, so it goes straight to Sonnet. A typical sequence:
+
+| Your prompt | Model and effort |
+|---|---|
+| a moderate task | sonnet, session effort |
+| "that's wrong, try again" | sonnet, one effort level higher (footer shows `sonnet+`) |
+| "still failing" | opus, session effort |
+| "still wrong" | opus, one effort level higher |
+
+A new prompt that is not a retry clears the raised effort. Short follow-ups keep it.
 
 ## Install
 
@@ -49,7 +69,7 @@ For each prompt the mod makes one small call to the engine's small fast model (`
 
 - A typical prompt costs about **$0.00003**; the worst case (a 4,000-character prompt) about **$0.00015**. That is roughly $0.03 to $0.15 per 1,000 prompts.
 - It adds a short wait before the turn starts.
-- It is skipped for prompts under 6 words (they reuse the last tier), for subagents, for empty turns, and while the mod is off. If the call fails, a word-count rule picks the tier instead.
+- It also runs on prompts under 6 words, but only to catch a retry ("still wrong"); otherwise they reuse the last tier. It is skipped for subagents, for empty turns, and while the mod is off. If the call fails, the previous tier is kept (opus when there is none).
 
 ### 2. What a switch costs
 
@@ -87,7 +107,7 @@ In the example above (Opus, Sonnet, Haiku, repeated three times), the first roun
 | Cache reads and writes | as in the diagram | as in the diagram |
 | Extra API call | one small classifier call per prompt (about $0.00003), which does not touch the main models' caches | none |
 | Status line | shows your session model; the button shows the model actually used | shows the model you picked |
-| How often it switches | whenever the classifier's tier changes; prompts under 6 words keep the previous one | only when you switch |
+| How often it switches | whenever the classifier's tier changes, or a retry steps up a model; prompts under 6 words keep the previous one unless they ask for a retry | only when you switch |
 | Cost of switching often | each switch away and back adds about 3 block-writes per turn | the same per switch, but most people switch less often |
 
 So the mod does not make a switch cheaper or more expensive. It changes how often you switch.
@@ -102,7 +122,8 @@ The wait before the first token is also longer on a cold switch, since the model
 
 ### 4. How the mod limits switching
 
-- Prompts under 6 words keep the previous tier, so "yes, do it" does not flip the model.
+- Prompts under 6 words keep the previous tier, so "yes, do it" does not flip the model. Only a retry ("still wrong") moves them up.
+- A retry raises effort before it switches model, so the first retry on Sonnet or Opus keeps that model's warm cache.
 - Subagents are never switched.
 - One toggle (or `/auto-model off`) puts everything back on your session model.
 

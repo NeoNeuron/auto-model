@@ -12,10 +12,10 @@ const MODE = {
   props: { modes: [] },
 } as const
 
-type Seen = { models: string[] }
+type Seen = { models: string[]; efforts?: (string | number | undefined)[] }
 
 async function step($: any, turnId: string, index: number, agentId?: string) {
-  const e = { turnId, index, model: 'claude-opus-5-5', messageCount: 1, ...(agentId ? { agentId } : {}) }
+  const e = { turnId, index, model: 'claude-opus-5-5', effort: 'medium', messageCount: 1, ...(agentId ? { agentId } : {}) }
   const stream = $.turn.step(e)
   for await (const _ of stream) {
     // drain
@@ -36,6 +36,7 @@ function engine(on: any, seen: Seen, label: { value: string | undefined }) {
   on('turn.start', (_: unknown, e: any) => ({ turnId: e.turnId }))
   on('turn.step', async function* (_: unknown, e: any) {
     seen.models.push(e.model)
+    seen.efforts?.push(e.effort)
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: null }
   })
 }
@@ -132,4 +133,79 @@ test('on desktop the model color is drawn as an SVG, not as button text', async 
   const rows = await band.find({ type: 'Svg' })
   expect(JSON.stringify(rows)).toContain('#6A9BCC')
   await band.unmount()
+})
+
+async function turn($: any, turnId: string, text: string) {
+  await $.turn.start({ text, turnId })
+  await step($, turnId, 0)
+}
+
+const MID = 'Add a --verbose flag to the build script that prints each step'
+
+test('retry raises effort on the same model first, then moves up a model', async ($, on) => {
+  const seen: Seen = { models: [], efforts: [] }
+  const label = { value: 'moderate' as string | undefined }
+  engine(on, seen, label)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await turn($, 't1', MID)
+  label.value = 'retry'
+  await turn($, 't2', 'That is wrong, the flag does nothing at all, please try again')
+  await turn($, 't3', 'Still not working after your second attempt at this flag')
+  expect(seen.models).toEqual(['sonnet', 'sonnet', 'opus'])
+  expect(seen.efforts).toEqual(['medium', 'high', 'medium'])
+})
+
+test('retry after haiku goes straight to sonnet', async ($, on) => {
+  const seen: Seen = { models: [], efforts: [] }
+  const label = { value: 'simple' as string | undefined }
+  engine(on, seen, label)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await turn($, 't1', 'What does the ls command print in a directory listing here?')
+  label.value = 'retry'
+  await turn($, 't2', 'still wrong')
+  expect(seen.models).toEqual(['haiku', 'sonnet'])
+  expect(seen.efforts).toEqual(['medium', 'medium'])
+})
+
+test('a short prompt escalates on retry but otherwise keeps the tier', async ($, on) => {
+  const seen: Seen = { models: [], efforts: [] }
+  const label = { value: 'moderate' as string | undefined }
+  engine(on, seen, label)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await turn($, 't1', MID)
+  label.value = 'simple'
+  await turn($, 't2', 'ok go on')
+  label.value = 'retry'
+  await turn($, 't3', 'try again')
+  label.value = 'simple'
+  await turn($, 't4', 'yes')
+  expect(seen.models).toEqual(['sonnet', 'sonnet', 'sonnet', 'sonnet'])
+  expect(seen.efforts).toEqual(['medium', 'medium', 'high', 'high'])
+})
+
+test('no usable answer: opus at first, then the previous tier', async ($, on) => {
+  const seen: Seen = { models: [], efforts: [] }
+  const label = { value: undefined as string | undefined }
+  engine(on, seen, label)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await turn($, 't1', 'hi')
+  label.value = 'simple'
+  await turn($, 't2', 'What does the ls command print in a directory listing here?')
+  label.value = 'nonsense'
+  await turn($, 't3', 'And what does the pwd command print in a terminal here?')
+  expect(seen.models).toEqual(['opus', 'haiku', 'haiku'])
+})
+
+test('a new non-retry label clears the raised effort', async ($, on) => {
+  const seen: Seen = { models: [], efforts: [] }
+  const label = { value: 'complex' as string | undefined }
+  engine(on, seen, label)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await turn($, 't1', LONG)
+  label.value = 'retry'
+  await turn($, 't2', 'That still fails the same way as before, try once more')
+  label.value = 'moderate'
+  await turn($, 't3', MID)
+  expect(seen.models).toEqual(['opus', 'opus', 'sonnet'])
+  expect(seen.efforts).toEqual(['medium', 'high', 'medium'])
 })
