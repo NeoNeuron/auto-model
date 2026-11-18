@@ -76,6 +76,22 @@ So a switch is only expensive when it goes **to a bigger model whose cache is co
 
 Each model has its own cache entry for the part of the conversation it has already seen, and each read keeps that entry alive. Alternating Opus, Sonnet, Opus, Sonnet therefore costs one cold write per model, once. After that each switch pays a cache read for the earlier context plus a write for the messages added since that model last ran, not a full reload. Over a long session each new message is written once per model that sees it, instead of once in total.
 
+![Cache reads and writes when switching Opus, Sonnet, Haiku for three rounds](assets/cache-switching.svg)
+
+In the example above (Opus, Sonnet, Haiku, repeated three times), the first round writes the whole context once per model. From turn 4 on, every switch reads the model's earlier prefix and writes only the blocks the other two models added.
+
+**Switching by hand with `/model` gives the same cache pattern.** The API keeps the cache per model and does not know how the model was chosen. The mod only changes the `model` field of each request, so the reads and writes above are the same either way. What differs:
+
+| | auto-model | Manual `/model` |
+|---|---|---|
+| Cache reads and writes | as in the diagram | as in the diagram |
+| Extra API call | one small classifier call per prompt (about $0.00003), which does not touch the main models' caches | none |
+| Status line | shows your session model; the button shows the model actually used | shows the model you picked |
+| How often it switches | whenever the classifier's tier changes; prompts under 6 words keep the previous one | only when you switch |
+| Cost of switching often | each switch away and back adds about 3 block-writes per turn | the same per switch, but most people switch less often |
+
+So the mod does not make a switch cheaper or more expensive. It changes how often you switch.
+
 When it does cost more:
 
 - **A model's cache expired.** The default time to live is 5 minutes (1 hour on the extended setting). After a longer pause, the next request on any model pays a cold write, with or without this mod.
